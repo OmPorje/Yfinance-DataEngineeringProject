@@ -1,115 +1,266 @@
-# Stock Market ETL Pipeline
 
-An end-to-end data pipeline that extracts daily stock price data, cleans and
-enriches it with financial metrics, loads it into a warehouse with idempotent
-upserts, runs automated data quality checks, and is orchestrated on a
-schedule with Apache Airflow in Docker.
+# 📈 Stock Market ETL Pipeline
 
-## Architecture
+An end-to-end **Data Engineering pipeline** that extracts daily stock market data from Yahoo Finance, performs automated cleaning and feature engineering, loads data into a DuckDB warehouse using idempotent upserts, validates data quality, and orchestrates the workflow with Apache Airflow running in Docker.
 
+## 🚀 Key Features
+
+- Incremental data extraction using watermark tracking
+- Automated ETL orchestration with Apache Airflow
+- Data warehouse loading with DuckDB
+- Idempotent upserts for safe reprocessing
+- Automated data quality validation
+- Dockerized deployment
+- Time-series feature engineering for stock analytics
+- Production-style pipeline architecture
+
+---
+
+## 🛠️ Tech Stack
+
+| Category | Technology |
+|-----------|------------|
+| Programming | Python |
+| Data Source | Yahoo Finance (yfinance) |
+| Storage Layer | Parquet |
+| Data Warehouse | DuckDB |
+| Processing | Pandas |
+| Orchestration | Apache Airflow |
+| Containerization | Docker |
+| Message Broker | Redis |
+| Metadata Database | PostgreSQL |
+
+---
+
+## 🏗️ Pipeline Architecture
+
+```text
+                    ┌─────────────────┐
+                    │ Yahoo Finance   │
+                    │   (yfinance)    │
+                    └────────┬────────┘
+                             │
+                             ▼
+                  ┌────────────────────┐
+                  │      Extract       │
+                  │ Incremental Pull   │
+                  │ Watermark Tracking │
+                  └────────┬───────────┘
+                           │
+                           ▼
+                  ┌────────────────────┐
+                  │    Raw Parquet     │
+                  │   Bronze Layer     │
+                  └────────┬───────────┘
+                           │
+                           ▼
+                  ┌────────────────────┐
+                  │     Transform      │
+                  │ Data Cleaning      │
+                  │ Feature Engineering│
+                  └────────┬───────────┘
+                           │
+                           ▼
+                  ┌────────────────────┐
+                  │       DuckDB       │
+                  │   Data Warehouse   │
+                  └────────┬───────────┘
+                           │
+                           ▼
+                  ┌────────────────────┐
+                  │ Quality Validation │
+                  │ Nulls, Duplicates  │
+                  │ Bad Prices, Stale  │
+                  └────────┬───────────┘
+                           │
+                           ▼
+                  ┌────────────────────┐
+                  │ Apache Airflow DAG │
+                  │ Scheduled Weekdays │
+                  └────────────────────┘
 ```
-yfinance API
-      │
-      ▼
- extract.py ──► data/raw/*.parquet        (bronze layer, incremental via watermark)
-      │
-      ▼
-transform.py ──► clean → compute metrics → upsert into DuckDB
-      │
-      ▼
-quality_checks.py ──► nulls / duplicates / bad prices / staleness (fails loudly)
 
-Orchestrated by Airflow (Docker, Celery executor):
-  extract >> transform >> quality_checks
-  Scheduled: weekdays, 10pm UTC
+### Airflow Workflow
+
+```text
+extract
+   │
+   ▼
+transform
+   │
+   ▼
+quality_checks
 ```
 
-## Why these design choices
+**Schedule:** Weekdays at 10:00 PM UTC
 
-**Watermark-based incremental extraction.** Instead of re-pulling a fixed
-lookback window every run, `extract.py` tracks the last successfully
-extracted date per ticker in `data/watermark.json` and only requests new
-days from the API. The watermark only advances *after* a successful write,
-so a failed run can't silently skip data on the next run.
+---
 
-**Idempotent upserts, not inserts.** `transform.py` loads into DuckDB using
-`INSERT ... ON CONFLICT (ticker, date) DO UPDATE`, keyed on a composite
-primary key. This means the pipeline can be re-run any number of times —
-on a schedule, after a failure, or manually — without ever creating
-duplicate rows or requiring a "wipe and reload."
+## 💡 Design Decisions
 
-**Fail-loud data quality gates.** `quality_checks.py` runs after every load
-and checks for nulls in required fields, duplicate `(ticker, date)` pairs,
-logically impossible prices (e.g. `low > high`), and stale tickers (no new
-data in 7+ days). Any failure exits non-zero, so Airflow marks the pipeline
-run as failed instead of letting bad data flow downstream unnoticed.
+### Watermark-Based Incremental Extraction
 
-**Containerized orchestration with a custom image.** Airflow runs via
-Docker Compose (Celery executor: scheduler, worker, DAG processor,
-webserver, Postgres, Redis). Project dependencies (`yfinance`, `duckdb`,
-etc.) are baked into a custom image via a `Dockerfile` rather than installed
-ad hoc into a running container, so they survive restarts and rebuilds.
+Instead of reprocessing historical data on every run, the pipeline tracks the latest successfully extracted date for each ticker in `watermark.json`.
 
-## Project structure
+Benefits:
 
+- Faster execution
+- Reduced API calls
+- Lower processing costs
+- No unnecessary reprocessing
+
+The watermark is updated only after successful writes, ensuring failed runs never skip data.
+
+---
+
+### Idempotent Upserts
+
+Data is loaded into DuckDB using:
+
+```sql
+INSERT ... ON CONFLICT (ticker, date)
+DO UPDATE
 ```
+
+Benefits:
+
+- Safe reruns
+- No duplicate records
+- Easy recovery after failures
+- Production-grade loading strategy
+
+---
+
+### Automated Data Quality Checks
+
+Every pipeline run validates:
+
+- Required field null checks
+- Duplicate `(ticker, date)` records
+- Invalid price relationships (`low > high`)
+- Stale ticker detection
+- Data freshness checks
+
+Any validation failure causes the Airflow DAG to fail immediately, preventing bad data from reaching downstream consumers.
+
+---
+
+### Dockerized Airflow Deployment
+
+Apache Airflow is deployed using Docker Compose with:
+
+- Scheduler
+- Worker
+- DAG Processor
+- Webserver
+- PostgreSQL
+- Redis
+
+Project dependencies are baked into a custom Docker image, ensuring consistent execution across environments.
+
+---
+
+## 📂 Project Structure
+
+```text
 stock-pipeline/
-├── config.py                 # tickers, paths, settings
+├── config.py
 ├── src/
-│   ├── extract.py            # incremental pull from yfinance -> raw parquet
-│   ├── transform.py          # clean, compute metrics, upsert into DuckDB
-│   └── quality_checks.py     # automated data quality gate
+│   ├── extract.py
+│   ├── transform.py
+│   └── quality_checks.py
 ├── data/
-│   ├── raw/                  # bronze layer: untouched daily pulls (parquet)
-│   └── watermark.json        # per-ticker last-extracted-date tracker
+│   ├── raw/
+│   └── watermark.json
 ├── requirements.txt
-└── warehouse.duckdb          # created on first run
+└── warehouse.duckdb
 
 airflow-docker/
-├── docker-compose.yaml       # Airflow (CeleryExecutor) + Postgres + Redis
-├── Dockerfile                # bakes project dependencies into the Airflow image
-├── .env                      # AIRFLOW_UID
+├── docker-compose.yaml
+├── Dockerfile
+├── .env
 └── dags/
-    └── stock_pipeline_dag.py # extract >> transform >> quality_checks
+    └── stock_pipeline_dag.py
 ```
 
-## Running it locally
+---
 
-**1. Run the pipeline directly (no orchestration):**
+## ▶️ Running the Project
+
+### Run ETL Locally
+
 ```bash
 cd stock-pipeline
+
 pip install -r requirements.txt
+
 python -m src.extract
 python -m src.transform
 python -m src.quality_checks
 ```
 
-**2. Run it on a schedule with Airflow:**
+### Run with Airflow
+
 ```bash
 cd airflow-docker
-docker compose build      # builds the custom image with project dependencies
+
+docker compose build
 docker compose up -d
 ```
-Open `http://localhost:8080` (default login: `airflow` / `airflow`), unpause
-the `stock_pipeline` DAG, and trigger it manually or let it run on its
-10pm UTC weekday schedule.
 
-> Note: update the Windows host path in `docker-compose.yaml`'s volume mount
-> and `PROJECT_DIR` in the DAG file to match your local `stock-pipeline`
-> location before running.
+Access Airflow:
 
-## What this project demonstrates
+```text
+http://localhost:8080
+```
 
-- Incremental extraction with watermark/checkpoint tracking
-- Idempotent loading via SQL upserts (safe re-runs, no duplicate data)
-- Automated data quality gates that fail the pipeline rather than pass bad data downstream
-- Per-group (per-ticker) time-series feature engineering with pandas (`groupby` + rolling windows)
-- Containerized orchestration with Airflow, including a custom Docker image to permanently solve a dependency-isolation issue between the scheduler and worker containers
-- Debugging real-world issues: API client TLS failures, schema drift between pipeline versions, column-order data corruption risk, and container filesystem isolation
+Default credentials:
 
-## Possible extensions
+```text
+Username: airflow
+Password: airflow
+```
 
-- Swap DuckDB for Postgres or Snowflake
-- Add a Streamlit dashboard reading from `warehouse.duckdb`
-- Add Slack/email alerting on quality check failure
-- Replace daily batch extraction with a Kafka-based intraday stream
+Enable the `stock_pipeline` DAG and either trigger it manually or allow it to run on its scheduled cadence.
+
+---
+
+## 📊 What This Project Demonstrates
+
+### Data Engineering Concepts
+
+- Incremental ETL pipelines
+- Watermark processing
+- Data warehouse design
+- Idempotent loading
+- Data quality monitoring
+- Workflow orchestration
+- Docker containerization
+- Batch processing architecture
+
+### Real-World Challenges Solved
+
+- API reliability issues
+- TLS connectivity failures
+- Schema drift management
+- Duplicate prevention
+- Data corruption safeguards
+- Container dependency isolation
+
+---
+
+## 🔮 Future Enhancements
+
+- Replace DuckDB with PostgreSQL or Snowflake
+- Add Streamlit analytics dashboard
+- Integrate Slack or email alerts
+- Add Great Expectations for advanced data validation
+- Implement Kafka-based streaming ingestion
+- Deploy using Kubernetes
+- Add CI/CD with GitHub Actions
+
+---
+
+## 📌 Key Takeaway
+
+This project demonstrates how to build a production-style ETL pipeline that is reliable, scalable, observable, and capable of handling real-world data engineering challenges such as incremental loading, data quality enforcement, orchestration, and failure recovery.
