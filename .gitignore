@@ -1,0 +1,23 @@
+# --- Python ---
+__pycache__/
+*.pyc
+venv/
+.pytest_cache/
+
+# --- Generated data (don't commit raw pulls or the warehouse) ---
+stock-pipeline/data/raw/*.parquet
+stock-pipeline/data/watermark.json
+stock-pipeline/warehouse.duckdb
+
+# --- Airflow runtime / generated files (not source) ---
+airflow-docker/logs/
+airflow-docker/config/airflow.cfg
+airflow-docker/plugins/
+
+# --- Secrets / machine-specific config: never commit ---
+.env
+airflow-docker/.env
+
+# --- Editor / OS ---
+.vscode/
+.DS_Store
